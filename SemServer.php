@@ -2,8 +2,8 @@
 /**
  * Created by PhpStorm.
  * User: lyh
- * Date: 2018/8/28
- * Time: 下午11:08
+ * Date: 2018/8/29
+ * Time: 上午10:00
  */
 
 namespace hc\sem;
@@ -11,48 +11,61 @@ namespace hc\sem;
 
 class SemServer
 {
-    private $client;
+    private $serv = null;
+    public $host = '127.0.0.1';
+    public $port = 9501;// 服务器端口
+    public $logAction = 'close';// close 是关闭log，write 是写入日志文件，screen 是显示到终端
 
     public function __construct()
     {
-        $this->client = new \Swoole\Client(SWOOLE_SOCK_TCP,SWOOLE_SOCK_ASYNC);
-        //注册连接成功回调
-        $this->client->on("connect", array($this, 'onConnect'));
-        //注册数据接收回调
-        $this->client->on("receive", array($this, 'onReceive'));
-        //注册连接失败回调
-        $this->client->on("error", array($this, 'onError'));
-        //注册连接关闭回调
-        $this->client->on("close", array($this, 'onClose'));
+        $this->serv = new \Swoole\Server($this->host, $this->port);
 
-        $this->connect();
+        //设置异步任务的工作进程数量
+        $this->serv->set(array('task_worker_num' => 4));
+
+        $this->serv->on('receive', array($this, 'onReceive'));
+        $this->serv->on('task', array($this, 'onTask'));
+        $this->serv->on('finish', array($this, 'onFinish'));
+        $this->serv->start();
     }
 
-    public function connect()
+    public function onReceive($serv, $fd, $from_id, $data)
     {
-        $fp = $this->client->connect("127.0.0.1", 9501 , 1);
-        if( !$fp ) {
-            echo "Error: {$fp->errMsg}[{$fp->errCode}]\n";
-            return;
+        //投递异步任务
+        $task_id = $serv->task($data);
+        $msg = "Dispatch AsyncTask: id = $task_id\n";
+        $this->writeLog($msg, 'info');
+    }
+
+    public function onTask($serv, $task_id, $from_id, $data)
+    {
+        $msg = "New AsyncTask[id=$task_id]".PHP_EOL;
+        $this->writeLog($msg, 'info');
+        //返回任务执行的结果
+        $serv->finish("$data -> OK");
+    }
+
+    public function onFinish($serv, $task_id, $from_id, $data)
+    {
+        $msg = "AsyncTask[$task_id] Finish: $data" . PHP_EOL;
+        $this->writeLog($msg, 'info');
+    }
+
+    public function writeLog($msg, $level)
+    {
+        switch ($this->logAction){
+            case 'close':
+                break;
+            case 'write':
+                \Yii::$level($msg, 'sem');
+                break;
+            case 'screen':
+                echo $msg;
+                break;
+            default:
+                trigger_error('$logAction 参数错误');
+                return false;
         }
-    }
-
-    public function onConnect($cli)
-    {
-        $cli->send("hello world\n");
-    }
-    public function onReceive($cli, $data)
-    {
-        echo "Received: ".$data."\n";
-    }
-    public function onError($cli)
-    {
-        echo "Connect failed \n";
-    }
-    public function onClose($cli)
-    {
-        echo "Connection close\n";
+        return true;
     }
 }
-
-new SemServer();
